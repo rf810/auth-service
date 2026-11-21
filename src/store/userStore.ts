@@ -33,4 +33,13 @@ export class UserStore {
   findById(id: string): User | undefined {
     return this.byId.get(id);
   }
+
+  /** Removes the user. Returns false if no such user existed. */
+  delete(id: string): boolean {
+    const user = this.byId.get(id);
+    if (!user) return false;
+    this.byId.delete(id);
+    this.byEmail.delete(user.email);
+    return true;
+  }
 }

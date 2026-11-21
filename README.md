@@ -32,6 +32,7 @@ npm start
 | POST   | `/auth/refresh`  | `{ refreshToken }`        |        |
 | POST   | `/auth/logout`   | `{ refreshToken }`        |        |
 | GET    | `/auth/me`       |                           | Bearer |
+| DELETE | `/auth/me`       |                           | Bearer |
 
 Example:
 

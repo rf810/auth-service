@@ -56,3 +56,16 @@ test("logout revokes the refresh token", async () => {
   await request(a).post("/auth/logout").send({ refreshToken: body.refreshToken }).expect(204);
   await request(a).post("/auth/refresh").send({ refreshToken: body.refreshToken }).expect(401);
 });
+
+test("delete account removes the user and invalidates their sessions", async () => {
+  const a = app();
+  const { body } = await request(a).post("/auth/register").send(creds);
+  const auth = `Bearer ${body.accessToken}`;
+  await request(a).delete("/auth/me").expect(401);
+  await request(a).delete("/auth/me").set("Authorization", auth).expect(204);
+  await request(a).get("/auth/me").set("Authorization", auth).expect(404);
+  await request(a).post("/auth/refresh").send({ refreshToken: body.refreshToken }).expect(401);
+  await request(a).post("/auth/login").send(creds).expect(401);
+  // The email can be registered again.
+  await request(a).post("/auth/register").send(creds).expect(201);
+});
