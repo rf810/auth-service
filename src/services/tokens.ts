@@ -41,6 +41,7 @@ export class TokenService {
   }
 
   issueRefreshToken(userId: string): string {
+    this.pruneExpired();
     const token = randomBytes(32).toString("base64url");
     this.refreshTokens.set(hash(token), {
       userId,
@@ -60,6 +61,21 @@ export class TokenService {
 
   revokeRefreshToken(token: string): void {
     this.refreshTokens.delete(hash(token));
+  }
+
+  /**
+   * Drops expired refresh-token records so the in-memory store does not grow
+   * without bound. Returns the number of records removed.
+   */
+  pruneExpired(now: number = Date.now()): number {
+    let removed = 0;
+    for (const [key, record] of this.refreshTokens) {
+      if (record.expiresAt < now) {
+        this.refreshTokens.delete(key);
+        removed++;
+      }
+    }
+    return removed;
   }
 }
 
