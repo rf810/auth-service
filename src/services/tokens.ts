@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import jwt from "jsonwebtoken";
 import type { Config } from "../config.ts";
+import { ExpiryHeap } from "./expiryHeap.ts";
 
 export interface AccessTokenClaims {
   sub: string;
@@ -18,6 +19,8 @@ interface RefreshRecord {
  */
 export class TokenService {
   private refreshTokens = new Map<string, RefreshRecord>();
+  /** Expiry index over refreshTokens, so pruning only touches expired records. */
+  private expiries = new ExpiryHeap();
   private config: Config;
 
   constructor(config: Config) {
@@ -41,11 +44,12 @@ export class TokenService {
   }
 
   issueRefreshToken(userId: string): string {
+    this.pruneExpired();
     const token = randomBytes(32).toString("base64url");
-    this.refreshTokens.set(hash(token), {
-      userId,
-      expiresAt: Date.now() + this.config.refreshTokenTtlSeconds * 1000,
-    });
+    const key = hash(token);
+    const expiresAt = Date.now() + this.config.refreshTokenTtlSeconds * 1000;
+    this.refreshTokens.set(key, { userId, expiresAt });
+    this.expiries.push({ key, expiresAt });
     return token;
   }
 
@@ -54,12 +58,55 @@ export class TokenService {
     const key = hash(token);
     const record = this.refreshTokens.get(key);
     this.refreshTokens.delete(key);
+    this.compactExpiries();
     if (!record || record.expiresAt < Date.now()) return undefined;
     return record.userId;
   }
 
   revokeRefreshToken(token: string): void {
     this.refreshTokens.delete(hash(token));
+    this.compactExpiries();
+  }
+
+  /**
+   * Consumed and revoked tokens leave stale heap entries behind until their
+   * original expiry. Once stale entries clearly outnumber live tokens, rebuild
+   * the heap from the live map so it stays proportional to active sessions.
+   * Rebuilding at a 2x threshold keeps the cost amortized O(log n) per call.
+   */
+  private compactExpiries(): void {
+    if (this.expiries.size <= 2 * this.refreshTokens.size + 64) return;
+    this.expiries.rebuild(
+      [...this.refreshTokens].map(([key, { expiresAt }]) => ({ key, expiresAt })),
+    );
+  }
+
+  /** Heap entries currently held (for tests and monitoring). */
+  get expiryIndexSize(): number {
+    return this.expiries.size;
+  }
+
+  /**
+   * Drops expired refresh-token records so the in-memory store does not grow
+   * without bound. Returns the number of records removed.
+   *
+   * Uses a min-heap keyed by expiresAt, so it only visits records that have
+   * expired (plus heap entries for tokens already consumed or revoked), never
+   * the valid ones. Ordering by expiresAt rather than insertion order keeps it
+   * correct if the clock moves backwards between issuances.
+   */
+  pruneExpired(now: number = Date.now()): number {
+    let removed = 0;
+    for (let top = this.expiries.peek(); top && top.expiresAt < now; top = this.expiries.peek()) {
+      this.expiries.pop();
+      const record = this.refreshTokens.get(top.key);
+      // The token may already be gone (consumed/revoked); skip its stale heap entry.
+      if (record && record.expiresAt === top.expiresAt) {
+        this.refreshTokens.delete(top.key);
+        removed++;
+      }
+    }
+    return removed;
   }
 }
 
