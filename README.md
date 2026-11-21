@@ -13,7 +13,7 @@ A small, readable demo authentication service built with Node.js, TypeScript and
 
 ## Quick start
 
-Requires Node.js 22.18+ (runs TypeScript directly, no build step).
+Requires Node.js 24+ (runs TypeScript directly, no build step).
 
 ```bash
 npm install

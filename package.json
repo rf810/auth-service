@@ -4,11 +4,11 @@
   "description": "Demo authentication service: registration, login, JWT access tokens and rotating refresh tokens.",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=22.18" },
+  "engines": { "node": ">=24" },
   "scripts": {
     "start": "node src/server.ts",
     "dev": "node --watch src/server.ts",
-    "test": "node --test test/",
+    "test": "node --test \"test/**/*.test.ts\"",
     "typecheck": "tsc"
   },
   "dependencies": {
