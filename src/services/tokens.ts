@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import jwt from "jsonwebtoken";
 import type { Config } from "../config.ts";
+import { ExpiryHeap } from "./expiryHeap.ts";
 
 export interface AccessTokenClaims {
   sub: string;
@@ -18,6 +19,8 @@ interface RefreshRecord {
  */
 export class TokenService {
   private refreshTokens = new Map<string, RefreshRecord>();
+  /** Expiry index over refreshTokens, so pruning only touches expired records. */
+  private expiries = new ExpiryHeap();
   private config: Config;
 
   constructor(config: Config) {
@@ -43,10 +46,10 @@ export class TokenService {
   issueRefreshToken(userId: string): string {
     this.pruneExpired();
     const token = randomBytes(32).toString("base64url");
-    this.refreshTokens.set(hash(token), {
-      userId,
-      expiresAt: Date.now() + this.config.refreshTokenTtlSeconds * 1000,
-    });
+    const key = hash(token);
+    const expiresAt = Date.now() + this.config.refreshTokenTtlSeconds * 1000;
+    this.refreshTokens.set(key, { userId, expiresAt });
+    this.expiries.push({ key, expiresAt });
     return token;
   }
 
@@ -66,12 +69,20 @@ export class TokenService {
   /**
    * Drops expired refresh-token records so the in-memory store does not grow
    * without bound. Returns the number of records removed.
+   *
+   * Uses a min-heap keyed by expiresAt, so it only visits records that have
+   * expired (plus heap entries for tokens already consumed or revoked), never
+   * the valid ones. Ordering by expiresAt rather than insertion order keeps it
+   * correct if the clock moves backwards between issuances.
    */
   pruneExpired(now: number = Date.now()): number {
     let removed = 0;
-    for (const [key, record] of this.refreshTokens) {
-      if (record.expiresAt < now) {
-        this.refreshTokens.delete(key);
+    for (let top = this.expiries.peek(); top && top.expiresAt < now; top = this.expiries.peek()) {
+      this.expiries.pop();
+      const record = this.refreshTokens.get(top.key);
+      // The token may already be gone (consumed/revoked); skip its stale heap entry.
+      if (record && record.expiresAt === top.expiresAt) {
+        this.refreshTokens.delete(top.key);
         removed++;
       }
     }
