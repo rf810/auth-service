@@ -78,6 +78,15 @@ export function authRouter(users: UserStore, tokens: TokenService): Router {
     res.json({ user: publicUser(user) });
   });
 
+  // Outstanding refresh tokens become useless once the user is gone:
+  // /refresh rejects tokens whose user no longer exists.
+  router.delete("/me", requireAuth(tokens), (req, res) => {
+    if (!users.delete(req.auth!.sub)) {
+      return res.status(404).json({ error: "user_not_found" });
+    }
+    res.status(204).end();
+  });
+
   return router;
 }
 
