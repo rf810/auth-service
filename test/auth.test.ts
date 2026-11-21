@@ -68,3 +68,13 @@ test("login is blocked after repeated failures and resets on success", async () 
   const blocked = await request(a).post("/auth/login").send(creds).expect(429);
   assert.equal(blocked.body.error, "too_many_attempts");
 });
+
+test("concurrent wrong-password logins cannot exceed the limit", async () => {
+  const a = app();
+  await request(a).post("/auth/register").send(creds).expect(201);
+  const wrong = { ...creds, password: "wrong-password" };
+  const results = await Promise.all(Array.from({ length: 12 }, () => request(a).post("/auth/login").send(wrong)));
+  const statuses = results.map((r) => r.status);
+  assert.equal(statuses.filter((s) => s === 401).length, 5, `got ${statuses}`);
+  assert.equal(statuses.filter((s) => s === 429).length, 7);
+});

@@ -42,16 +42,26 @@ export function authRouter(
   router.post("/login", async (req, res, next) => {
     try {
       const { email, password } = credentials.parse(req.body);
-      if (limiter.isBlocked(email)) {
+      // Reserve the attempt before verifying, so concurrent requests for this
+      // email count it while bcrypt runs.
+      const attempt = limiter.begin(email);
+      if (!attempt) {
         return res.status(429).json({ error: "too_many_attempts" });
       }
       const user = users.findByEmail(email);
+      let valid: boolean;
+      try {
+        valid = !!user && (await verifyPassword(password, user.passwordHash));
+      } catch (err) {
+        attempt.release();
+        throw err;
+      }
       // Same response for unknown email and wrong password to avoid account enumeration.
-      if (!user || !(await verifyPassword(password, user.passwordHash))) {
-        limiter.recordFailure(email);
+      if (!user || !valid) {
+        attempt.fail();
         return res.status(401).json({ error: "invalid_credentials" });
       }
-      limiter.reset(email);
+      attempt.succeed();
       res.json({ user: publicUser(user), ...issueTokens(user) });
     } catch (err) {
       next(err);
