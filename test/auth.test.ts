@@ -92,3 +92,50 @@ test("change password updates login and revokes existing refresh tokens", async 
   await request(a).post("/auth/login").send(creds).expect(401);
   await request(a).post("/auth/login").send({ ...creds, password: newPassword }).expect(200);
 });
+
+test("changing to a password with the same 72-byte prefix revokes the old one", async () => {
+  const a = app();
+  const prefix = "a".repeat(72);
+  const user = { email: "long@example.com", password: prefix + "old" };
+  const { body } = await request(a).post("/auth/register").send(user).expect(201);
+  await request(a)
+    .post("/auth/password")
+    .set("Authorization", `Bearer ${body.accessToken}`)
+    .send({ currentPassword: user.password, newPassword: prefix + "new" })
+    .expect(200);
+  await request(a).post("/auth/login").send(user).expect(401);
+  await request(a).post("/auth/login").send({ ...user, password: prefix + "new" }).expect(200);
+});
+
+test("a login racing a password change never keeps a working refresh token", async () => {
+  for (let i = 0; i < 5; i++) {
+    const a = app();
+    const { body } = await request(a).post("/auth/register").send(creds);
+    const [login] = await Promise.all([
+      request(a).post("/auth/login").send(creds),
+      request(a)
+        .post("/auth/password")
+        .set("Authorization", `Bearer ${body.accessToken}`)
+        .send({ currentPassword: creds.password, newPassword: "new-password-123" })
+        .expect(200),
+    ]);
+    if (login.status === 200) {
+      await request(a).post("/auth/refresh").send({ refreshToken: login.body.refreshToken }).expect(401);
+    } else {
+      assert.equal(login.status, 401);
+    }
+  }
+});
+
+test("two concurrent password changes cannot both succeed", async () => {
+  const a = app();
+  const { body } = await request(a).post("/auth/register").send(creds);
+  const change = (newPassword: string) =>
+    request(a)
+      .post("/auth/password")
+      .set("Authorization", `Bearer ${body.accessToken}`)
+      .send({ currentPassword: creds.password, newPassword });
+  const results = await Promise.all([change("first-new-password"), change("second-new-password")]);
+  const statuses = results.map((r) => r.status).sort();
+  assert.ok(statuses.filter((s) => s === 200).length === 1, `got ${statuses}`);
+});

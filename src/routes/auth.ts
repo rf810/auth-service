@@ -20,6 +20,9 @@ const changePasswordBody = z.object({
 export function authRouter(users: UserStore, tokens: TokenService): Router {
   const router = Router();
 
+  const passwordUnchanged = (userId: string, hash: string) =>
+    users.findById(userId)?.passwordHash === hash;
+
   const issueTokens = (user: User) => ({
     accessToken: tokens.issueAccessToken({ sub: user.id, email: user.email }),
     refreshToken: tokens.issueRefreshToken(user.id),
@@ -44,7 +47,15 @@ export function authRouter(users: UserStore, tokens: TokenService): Router {
       const { email, password } = credentials.parse(req.body);
       const user = users.findByEmail(email);
       // Same response for unknown email and wrong password to avoid account enumeration.
-      if (!user || !(await verifyPassword(password, user.passwordHash))) {
+      if (!user) return res.status(401).json({ error: "invalid_credentials" });
+      const verifiedHash = user.passwordHash;
+      if (!(await verifyPassword(password, verifiedHash))) {
+        return res.status(401).json({ error: "invalid_credentials" });
+      }
+      // The password may have changed while we were verifying. No await between
+      // this check and issuing tokens, so a concurrent password change either
+      // revokes these tokens or makes this login fail.
+      if (!passwordUnchanged(user.id, verifiedHash)) {
         return res.status(401).json({ error: "invalid_credentials" });
       }
       res.json({ user: publicUser(user), ...issueTokens(user) });
@@ -88,10 +99,17 @@ export function authRouter(users: UserStore, tokens: TokenService): Router {
       const { currentPassword, newPassword } = changePasswordBody.parse(req.body);
       const user = users.findById(req.auth!.sub);
       if (!user) return res.status(404).json({ error: "user_not_found" });
-      if (!(await verifyPassword(currentPassword, user.passwordHash))) {
+      const verifiedHash = user.passwordHash;
+      if (!(await verifyPassword(currentPassword, verifiedHash))) {
         return res.status(401).json({ error: "invalid_credentials" });
       }
-      users.updatePassword(user.id, await hashPassword(newPassword));
+      const newHash = await hashPassword(newPassword);
+      // Reject if another request changed the password while we were hashing.
+      // Check, update and revoke run with no await in between.
+      if (!passwordUnchanged(user.id, verifiedHash)) {
+        return res.status(409).json({ error: "password_changed_concurrently" });
+      }
+      users.updatePassword(user.id, newHash);
       // Sign out every other session; hand this client a fresh token pair.
       tokens.revokeAllRefreshTokensForUser(user.id);
       res.json(issueTokens(user));
