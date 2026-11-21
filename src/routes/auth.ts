@@ -12,6 +12,11 @@ const credentials = z.object({
 
 const refreshBody = z.object({ refreshToken: z.string().min(1) });
 
+const changePasswordBody = z.object({
+  currentPassword: z.string().min(1).max(128),
+  newPassword: z.string().min(8).max(128),
+});
+
 export function authRouter(users: UserStore, tokens: TokenService): Router {
   const router = Router();
 
@@ -76,6 +81,23 @@ export function authRouter(users: UserStore, tokens: TokenService): Router {
     const user = users.findById(req.auth!.sub);
     if (!user) return res.status(404).json({ error: "user_not_found" });
     res.json({ user: publicUser(user) });
+  });
+
+  router.post("/password", requireAuth(tokens), async (req, res, next) => {
+    try {
+      const { currentPassword, newPassword } = changePasswordBody.parse(req.body);
+      const user = users.findById(req.auth!.sub);
+      if (!user) return res.status(404).json({ error: "user_not_found" });
+      if (!(await verifyPassword(currentPassword, user.passwordHash))) {
+        return res.status(401).json({ error: "invalid_credentials" });
+      }
+      users.updatePassword(user.id, await hashPassword(newPassword));
+      // Sign out every other session; hand this client a fresh token pair.
+      tokens.revokeAllRefreshTokensForUser(user.id);
+      res.json(issueTokens(user));
+    } catch (err) {
+      next(err);
+    }
   });
 
   return router;

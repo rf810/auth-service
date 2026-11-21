@@ -61,6 +61,13 @@ export class TokenService {
   revokeRefreshToken(token: string): void {
     this.refreshTokens.delete(hash(token));
   }
+
+  /** Revokes every outstanding refresh token belonging to the user. */
+  revokeAllRefreshTokensForUser(userId: string): void {
+    for (const [key, record] of this.refreshTokens) {
+      if (record.userId === userId) this.refreshTokens.delete(key);
+    }
+  }
 }
 
 function hash(token: string): string {

@@ -56,3 +56,39 @@ test("logout revokes the refresh token", async () => {
   await request(a).post("/auth/logout").send({ refreshToken: body.refreshToken }).expect(204);
   await request(a).post("/auth/refresh").send({ refreshToken: body.refreshToken }).expect(401);
 });
+
+test("change password requires auth and the current password", async () => {
+  const a = app();
+  const { body } = await request(a).post("/auth/register").send(creds);
+  const auth = `Bearer ${body.accessToken}`;
+  await request(a).post("/auth/password").send({ currentPassword: creds.password, newPassword: "new-password-123" }).expect(401);
+  const bad = await request(a)
+    .post("/auth/password")
+    .set("Authorization", auth)
+    .send({ currentPassword: "wrong-password", newPassword: "new-password-123" })
+    .expect(401);
+  assert.equal(bad.body.error, "invalid_credentials");
+  await request(a)
+    .post("/auth/password")
+    .set("Authorization", auth)
+    .send({ currentPassword: creds.password, newPassword: "short" })
+    .expect(400);
+});
+
+test("change password updates login and revokes existing refresh tokens", async () => {
+  const a = app();
+  const { body } = await request(a).post("/auth/register").send(creds);
+  const other = await request(a).post("/auth/login").send(creds).expect(200);
+  const newPassword = "new-password-123";
+  const changed = await request(a)
+    .post("/auth/password")
+    .set("Authorization", `Bearer ${body.accessToken}`)
+    .send({ currentPassword: creds.password, newPassword })
+    .expect(200);
+  assert.ok(changed.body.accessToken);
+  await request(a).post("/auth/refresh").send({ refreshToken: body.refreshToken }).expect(401);
+  await request(a).post("/auth/refresh").send({ refreshToken: other.body.refreshToken }).expect(401);
+  await request(a).post("/auth/refresh").send({ refreshToken: changed.body.refreshToken }).expect(200);
+  await request(a).post("/auth/login").send(creds).expect(401);
+  await request(a).post("/auth/login").send({ ...creds, password: newPassword }).expect(200);
+});
