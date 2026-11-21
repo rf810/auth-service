@@ -4,6 +4,7 @@ import { hashPassword, verifyPassword } from "../services/passwords.ts";
 import type { TokenService } from "../services/tokens.ts";
 import type { User, UserStore } from "../store/userStore.ts";
 import { requireAuth } from "../middleware/requireAuth.ts";
+import { LoginLimiter } from "../services/loginLimiter.ts";
 
 const credentials = z.object({
   email: z.string().email(),
@@ -12,7 +13,11 @@ const credentials = z.object({
 
 const refreshBody = z.object({ refreshToken: z.string().min(1) });
 
-export function authRouter(users: UserStore, tokens: TokenService): Router {
+export function authRouter(
+  users: UserStore,
+  tokens: TokenService,
+  limiter: LoginLimiter = new LoginLimiter(),
+): Router {
   const router = Router();
 
   const issueTokens = (user: User) => ({
@@ -37,11 +42,16 @@ export function authRouter(users: UserStore, tokens: TokenService): Router {
   router.post("/login", async (req, res, next) => {
     try {
       const { email, password } = credentials.parse(req.body);
+      if (limiter.isBlocked(email)) {
+        return res.status(429).json({ error: "too_many_attempts" });
+      }
       const user = users.findByEmail(email);
       // Same response for unknown email and wrong password to avoid account enumeration.
       if (!user || !(await verifyPassword(password, user.passwordHash))) {
+        limiter.recordFailure(email);
         return res.status(401).json({ error: "invalid_credentials" });
       }
+      limiter.reset(email);
       res.json({ user: publicUser(user), ...issueTokens(user) });
     } catch (err) {
       next(err);

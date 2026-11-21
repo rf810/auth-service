@@ -56,3 +56,15 @@ test("logout revokes the refresh token", async () => {
   await request(a).post("/auth/logout").send({ refreshToken: body.refreshToken }).expect(204);
   await request(a).post("/auth/refresh").send({ refreshToken: body.refreshToken }).expect(401);
 });
+
+test("login is blocked after repeated failures and resets on success", async () => {
+  const a = app();
+  await request(a).post("/auth/register").send(creds).expect(201);
+  const wrong = { ...creds, password: "wrong-password" };
+  for (let i = 0; i < 4; i++) await request(a).post("/auth/login").send(wrong).expect(401);
+  // A success before the limit clears the counter.
+  await request(a).post("/auth/login").send(creds).expect(200);
+  for (let i = 0; i < 5; i++) await request(a).post("/auth/login").send(wrong).expect(401);
+  const blocked = await request(a).post("/auth/login").send(creds).expect(429);
+  assert.equal(blocked.body.error, "too_many_attempts");
+});
