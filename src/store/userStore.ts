@@ -33,4 +33,10 @@ export class UserStore {
   findById(id: string): User | undefined {
     return this.byId.get(id);
   }
+
+  updatePassword(id: string, passwordHash: string): User | undefined {
+    const user = this.byId.get(id);
+    if (user) user.passwordHash = passwordHash;
+    return user;
+  }
 }
