@@ -11,6 +11,12 @@ export class ExpiryHeap {
     return this.items.length;
   }
 
+  /** Replaces the contents with the given entries, rebuilding heap order. */
+  rebuild(entries: Iterable<ExpiryEntry>): void {
+    this.items = [];
+    for (const entry of entries) this.push(entry);
+  }
+
   peek(): ExpiryEntry | undefined {
     return this.items[0];
   }

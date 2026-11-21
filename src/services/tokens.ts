@@ -58,12 +58,32 @@ export class TokenService {
     const key = hash(token);
     const record = this.refreshTokens.get(key);
     this.refreshTokens.delete(key);
+    this.compactExpiries();
     if (!record || record.expiresAt < Date.now()) return undefined;
     return record.userId;
   }
 
   revokeRefreshToken(token: string): void {
     this.refreshTokens.delete(hash(token));
+    this.compactExpiries();
+  }
+
+  /**
+   * Consumed and revoked tokens leave stale heap entries behind until their
+   * original expiry. Once stale entries clearly outnumber live tokens, rebuild
+   * the heap from the live map so it stays proportional to active sessions.
+   * Rebuilding at a 2x threshold keeps the cost amortized O(log n) per call.
+   */
+  private compactExpiries(): void {
+    if (this.expiries.size <= 2 * this.refreshTokens.size + 64) return;
+    this.expiries.rebuild(
+      [...this.refreshTokens].map(([key, { expiresAt }]) => ({ key, expiresAt })),
+    );
+  }
+
+  /** Heap entries currently held (for tests and monitoring). */
+  get expiryIndexSize(): number {
+    return this.expiries.size;
   }
 
   /**

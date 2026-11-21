@@ -43,3 +43,24 @@ test("pruneExpired skips tokens that were already consumed", () => {
   tokens.consumeRefreshToken(used);
   assert.equal(tokens.pruneExpired(Date.now() + 61_000), 1);
 });
+
+test("rotating tokens does not let stale expiry entries pile up", () => {
+  const tokens = service();
+  let token = tokens.issueRefreshToken("user-1");
+  for (let i = 0; i < 5_000; i++) {
+    assert.equal(tokens.consumeRefreshToken(token), "user-1");
+    token = tokens.issueRefreshToken("user-1");
+  }
+  // One live token; the heap must stay bounded instead of holding ~5,000 stale entries.
+  assert.ok(tokens.expiryIndexSize <= 2 * 1 + 64 + 1, `heap size ${tokens.expiryIndexSize}`);
+  assert.equal(tokens.consumeRefreshToken(token), "user-1");
+});
+
+test("revoking tokens also compacts the expiry index", () => {
+  const tokens = service();
+  const issued = Array.from({ length: 500 }, () => tokens.issueRefreshToken("user-1"));
+  for (const t of issued.slice(0, 450)) tokens.revokeRefreshToken(t);
+  assert.ok(tokens.expiryIndexSize <= 2 * 50 + 64, `heap size ${tokens.expiryIndexSize}`);
+  // Remaining tokens still expire and prune correctly after compaction.
+  assert.equal(tokens.pruneExpired(Date.now() + 61_000), 50);
+});
